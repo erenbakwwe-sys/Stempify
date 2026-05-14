@@ -89,8 +89,14 @@ export default function AdminDashboard() {
 
   const loadStaff = async () => {
     try {
-      const snap = await getDocs(collection(db, 'staff'));
-      setStaffList(snap.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+      const saved = localStorage.getItem('stampify_staff');
+      if (saved) {
+        setStaffList(JSON.parse(saved));
+      } else {
+        const defaultStaff = [{ id: '1', name: 'Ahmet Yılmaz', role: 'Kasiyer', pin: '1234' }];
+        localStorage.setItem('stampify_staff', JSON.stringify(defaultStaff));
+        setStaffList(defaultStaff);
+      }
     } catch {}
   };
 
@@ -103,28 +109,27 @@ export default function AdminDashboard() {
       toast.error('PIN 4 haneli olmalıdır.');
       return;
     }
-    try {
-      await addDoc(collection(db, 'staff'), {
-        name: newStaffName,
-        role: newStaffRole,
-        pin: newStaffPin,
-        createdAt: serverTimestamp(),
-      });
-      toast.success(`${newStaffName} başarıyla eklendi!`);
-      setNewStaffName('');
-      setNewStaffPin('');
-      loadStaff();
-    } catch (err) {
-      toast.error('Ekleme başarısız. Firebase bağlantısını kontrol edin.');
-    }
+    const newStaff = {
+      id: Date.now().toString(),
+      name: newStaffName,
+      role: newStaffRole,
+      pin: newStaffPin,
+      createdAt: new Date().toISOString()
+    };
+    const updatedList = [...staffList, newStaff];
+    localStorage.setItem('stampify_staff', JSON.stringify(updatedList));
+    setStaffList(updatedList);
+    
+    toast.success(`${newStaffName} başarıyla eklendi!`);
+    setNewStaffName('');
+    setNewStaffPin('');
   };
 
   const handleDeleteStaff = async (id: string, name: string) => {
-    try {
-      await deleteDoc(doc(db, 'staff', id));
-      toast.success(`${name} silindi.`);
-      loadStaff();
-    } catch { toast.error('Silme başarısız.'); }
+    const updatedList = staffList.filter(s => s.id !== id);
+    localStorage.setItem('stampify_staff', JSON.stringify(updatedList));
+    setStaffList(updatedList);
+    toast.success(`${name} silindi.`);
   };
 
   // Export to CSV for Marketing
