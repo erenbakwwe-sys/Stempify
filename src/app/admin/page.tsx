@@ -90,20 +90,40 @@ export default function AdminDashboard() {
 
   const loadStaff = async () => {
     try {
-      // Try Firestore first, fall back to localStorage
+      // Try Firestore first
       const snap = await getDocs(collection(db, 'staff'));
       if (!snap.empty) {
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as {id:string;name:string;role:string;pin:string;createdAt?:any}[];
         setStaffList(list);
         localStorage.setItem('stampify_staff', JSON.stringify(list));
       } else {
+        // Firestore boş — localStorage'dan yükle ve Firestore'a migrate et
         const saved = localStorage.getItem('stampify_staff');
+        let localList: {id:string;name:string;role:string;pin:string;createdAt?:any}[] = [];
         if (saved) {
-          setStaffList(JSON.parse(saved));
+          localList = JSON.parse(saved);
         } else {
-          const defaultStaff = [{ id: '1', name: 'Ahmet Yılmaz', role: 'Kasiyer', pin: '1234' }];
-          localStorage.setItem('stampify_staff', JSON.stringify(defaultStaff));
-          setStaffList(defaultStaff);
+          localList = [{ id: '1', name: 'Ahmet Yılmaz', role: 'Kasiyer', pin: '1234' }];
+          localStorage.setItem('stampify_staff', JSON.stringify(localList));
+        }
+        setStaffList(localList);
+        // Firestore'a otomatik migrate et (böylece müşteri sayfası PIN'leri okuyabilir)
+        for (const s of localList) {
+          try {
+            await addDoc(collection(db, 'staff'), {
+              name: s.name,
+              role: s.role,
+              pin: s.pin,
+              createdAt: serverTimestamp()
+            });
+          } catch {}
+        }
+        // Migrate sonrası Firestore'dan tekrar yükle (gerçek ID'leri al)
+        const newSnap = await getDocs(collection(db, 'staff'));
+        if (!newSnap.empty) {
+          const migratedList = newSnap.docs.map(d => ({ id: d.id, ...d.data() })) as {id:string;name:string;role:string;pin:string;createdAt?:any}[];
+          setStaffList(migratedList);
+          localStorage.setItem('stampify_staff', JSON.stringify(migratedList));
         }
       }
     } catch {
@@ -230,27 +250,29 @@ export default function AdminDashboard() {
 
   const handleQRResult = async (url: string) => {
     stopScanner();
-    // Extract phone from QR: stampify:add:5551234567
     if (url.startsWith('stampify:add:')) {
-      const phone = url.replace('stampify:add:', '');
+      const phone = url.replace('stampify:add:', '').trim();
       setStampPhone(phone);
 
-      // Look up user in Firebase — add to leads if not already there
       try {
         const existingUser = await getUserByPhone(phone);
         if (existingUser) {
-          // Already registered — update local list if needed
-          setFirebaseUsers(prev => {
-            if (prev.find(u => u.phone === phone)) return prev;
-            return [...prev, existingUser];
-          });
-          toast.success(`Müşteri bulundu: ${existingUser.name}`, { icon: <QrCode size={18}/> });
+          // Tüm kullanıcı listesini Firestore'dan taze yükle — Müşteriler sekmesi anında güncellenir
+          getAllUsers()
+            .then(users => setFirebaseUsers(users))
+            .catch(() => {
+              // Fallback: sadece bu kullanıcıyı ekle
+              setFirebaseUsers(prev => {
+                if (prev.find(u => u.phone === phone)) return prev;
+                return [...prev, existingUser];
+              });
+            });
+          toast.success(`✅ Müşteri bulundu: ${existingUser.name} — Müşteriler sekmesine eklendi!`, { icon: <QrCode size={18}/>, duration: 4000 });
         } else {
-          // Unknown QR — show phone number and warn
-          toast.warning(`QR okundu ama kayıtlı müşteri bulunamadı: ${phone}`);
+          toast.warning(`⚠️ Bu telefon numarası henüz kayıtlı değil: ${phone}`, { duration: 4000 });
         }
-      } catch {
-        toast.success(`QR okundu: ${phone}`, { icon: <QrCode size={18}/> });
+      } catch (err) {
+        toast.error('Müşteri aranırken hata oluştu.');
       }
     } else {
       toast.info('QR kod okundu: ' + url);
