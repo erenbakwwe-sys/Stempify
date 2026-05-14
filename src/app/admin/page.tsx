@@ -12,9 +12,9 @@ import { Progress } from "@/components/ui/progress";
 import { Lock, Users, Coffee, Sparkles, Send, PlusCircle, ArrowRight, Gift, ShieldAlert, Zap, MapPin, BellRing, ChevronDown, BarChart3, TrendingUp, Camera, X, UserPlus, Trash2, QrCode, Download, Printer, Info } from "lucide-react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { getAllUsers, getUserByPhone, addStamp, type StampifyUser } from '@/lib/firestore';
+import { getAllUsers, getUserByPhone, addStamp, registerUser, type StampifyUser } from '@/lib/firestore';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { QRCodeSVG } from 'qrcode.react';
 
 
@@ -49,6 +49,7 @@ export default function AdminDashboard() {
   const [showScanner, setShowScanner] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [isAddingStamp, setIsAddingStamp] = useState(false);
 
   // Staff Management
   const [staffList, setStaffList] = useState<{id:string; name:string; role:string; pin:string; createdAt?:any}[]>([]);
@@ -89,15 +90,26 @@ export default function AdminDashboard() {
 
   const loadStaff = async () => {
     try {
-      const saved = localStorage.getItem('stampify_staff');
-      if (saved) {
-        setStaffList(JSON.parse(saved));
+      // Try Firestore first, fall back to localStorage
+      const snap = await getDocs(collection(db, 'staff'));
+      if (!snap.empty) {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as {id:string;name:string;role:string;pin:string;createdAt?:any}[];
+        setStaffList(list);
+        localStorage.setItem('stampify_staff', JSON.stringify(list));
       } else {
-        const defaultStaff = [{ id: '1', name: 'Ahmet Yılmaz', role: 'Kasiyer', pin: '1234' }];
-        localStorage.setItem('stampify_staff', JSON.stringify(defaultStaff));
-        setStaffList(defaultStaff);
+        const saved = localStorage.getItem('stampify_staff');
+        if (saved) {
+          setStaffList(JSON.parse(saved));
+        } else {
+          const defaultStaff = [{ id: '1', name: 'Ahmet Yılmaz', role: 'Kasiyer', pin: '1234' }];
+          localStorage.setItem('stampify_staff', JSON.stringify(defaultStaff));
+          setStaffList(defaultStaff);
+        }
       }
-    } catch {}
+    } catch {
+      const saved = localStorage.getItem('stampify_staff');
+      if (saved) setStaffList(JSON.parse(saved));
+    }
   };
 
   const handleAddStaff = async () => {
@@ -109,23 +121,38 @@ export default function AdminDashboard() {
       toast.error('PIN 4 haneli olmalıdır.');
       return;
     }
-    const newStaff = {
-      id: Date.now().toString(),
-      name: newStaffName,
-      role: newStaffRole,
-      pin: newStaffPin,
-      createdAt: new Date().toISOString()
-    };
-    const updatedList = [...staffList, newStaff];
-    localStorage.setItem('stampify_staff', JSON.stringify(updatedList));
-    setStaffList(updatedList);
-    
-    toast.success(`${newStaffName} başarıyla eklendi!`);
-    setNewStaffName('');
-    setNewStaffPin('');
+    try {
+      const staffData = {
+        name: newStaffName,
+        role: newStaffRole,
+        pin: newStaffPin,
+        createdAt: serverTimestamp()
+      };
+      // Save to Firestore
+      const docRef = await addDoc(collection(db, 'staff'), staffData);
+      const newStaff = { id: docRef.id, name: newStaffName, role: newStaffRole, pin: newStaffPin, createdAt: new Date().toISOString() };
+      const updatedList = [...staffList, newStaff];
+      localStorage.setItem('stampify_staff', JSON.stringify(updatedList));
+      setStaffList(updatedList);
+      toast.success(`${newStaffName} başarıyla eklendi!`);
+      setNewStaffName('');
+      setNewStaffPin('');
+    } catch (err) {
+      // Fallback to localStorage if Firestore fails
+      const newStaff = { id: Date.now().toString(), name: newStaffName, role: newStaffRole, pin: newStaffPin, createdAt: new Date().toISOString() };
+      const updatedList = [...staffList, newStaff];
+      localStorage.setItem('stampify_staff', JSON.stringify(updatedList));
+      setStaffList(updatedList);
+      toast.success(`${newStaffName} eklendi (çevrimdışı mod).`);
+      setNewStaffName('');
+      setNewStaffPin('');
+    }
   };
 
   const handleDeleteStaff = async (id: string, name: string) => {
+    try {
+      await deleteDoc(doc(db, 'staff', id));
+    } catch {}
     const updatedList = staffList.filter(s => s.id !== id);
     localStorage.setItem('stampify_staff', JSON.stringify(updatedList));
     setStaffList(updatedList);
@@ -201,13 +228,30 @@ export default function AdminDashboard() {
     setShowScanner(false);
   };
 
-  const handleQRResult = (url: string) => {
+  const handleQRResult = async (url: string) => {
     stopScanner();
     // Extract phone from QR: stampify:add:5551234567
     if (url.startsWith('stampify:add:')) {
       const phone = url.replace('stampify:add:', '');
       setStampPhone(phone);
-      toast.success(`Müşteri bulundu: ${phone}`, { icon: <QrCode size={18}/> });
+
+      // Look up user in Firebase — add to leads if not already there
+      try {
+        const existingUser = await getUserByPhone(phone);
+        if (existingUser) {
+          // Already registered — update local list if needed
+          setFirebaseUsers(prev => {
+            if (prev.find(u => u.phone === phone)) return prev;
+            return [...prev, existingUser];
+          });
+          toast.success(`Müşteri bulundu: ${existingUser.name}`, { icon: <QrCode size={18}/> });
+        } else {
+          // Unknown QR — show phone number and warn
+          toast.warning(`QR okundu ama kayıtlı müşteri bulunamadı: ${phone}`);
+        }
+      } catch {
+        toast.success(`QR okundu: ${phone}`, { icon: <QrCode size={18}/> });
+      }
     } else {
       toast.info('QR kod okundu: ' + url);
     }
@@ -238,18 +282,40 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleAddStamp = (e: React.FormEvent) => {
+  const handleAddStamp = async (e: React.FormEvent) => {
     e.preventDefault();
-    const customerIndex = customers.findIndex(c => c.phone === stampPhone);
-    if (customerIndex >= 0) {
-      const newCustomers = [...customers];
-      newCustomers[customerIndex].stamps = (newCustomers[customerIndex].stamps + 1) % 7;
-      newCustomers[customerIndex].lifetimeStamps += 1;
-      setCustomers(newCustomers);
-      toast.success(`${newCustomers[customerIndex].name} kullanıcısına 1 damga eklendi!`, { icon: <Coffee className="text-primary"/> });
+    if (!stampPhone.trim()) return;
+    setIsAddingStamp(true);
+    try {
+      // Look up in firebaseUsers (already loaded) first for speed
+      let user = firebaseUsers.find(u => u.phone === stampPhone);
+
+      // If not found locally, query Firestore
+      if (!user) {
+        const found = await getUserByPhone(stampPhone);
+        if (found) {
+          user = found;
+          setFirebaseUsers(prev => [...prev, found]); // add to local leads list
+        }
+      }
+
+      if (!user || !user.id) {
+        toast.error("Bu numaraya ait kayıtlı müşteri bulunamadı.", { style: { background: "var(--destructive)", color: "white", border: "none" } });
+        return;
+      }
+
+      const result = await addStamp(user.id, businessId);
+      toast.success(
+        result.rewardEarned
+          ? `🎉 ${user.name} 6. damgasını tamamladı! Ödül kazandı!`
+          : `${user.name} için 1 damga eklendi! (${result.newCount}/6)`,
+        { icon: <Coffee className="text-primary" /> }
+      );
       setStampPhone("");
-    } else {
-      toast.error("Bu numaraya ait müşteri bulunamadı.", { style: { background: "var(--destructive)", color: "white", border: "none" }});
+    } catch (err) {
+      toast.error("Damga eklenirken hata oluştu.", { style: { background: "var(--destructive)", color: "white", border: "none" } });
+    } finally {
+      setIsAddingStamp(false);
     }
   };
 
@@ -382,10 +448,12 @@ export default function AdminDashboard() {
                   </CardHeader>
                   <CardContent>
                     <form onSubmit={handleAddStamp} className="flex gap-2 mt-2">
-                      <Input placeholder="Tel No (5XX...)" value={stampPhone} onChange={(e) => setStampPhone(e.target.value)} className="bg-black/20 border-white/20 text-white" />
-                      <Button variant="secondary" type="submit" size="sm" className="h-10 font-bold bg-white text-primary">Ekle</Button>
+                      <Input placeholder="Tel No (5XX...)" value={stampPhone} onChange={(e) => setStampPhone(e.target.value)} className="bg-black/20 border-white/20 text-white" disabled={isAddingStamp} />
+                      <Button variant="secondary" type="submit" size="sm" className="h-10 font-bold bg-white text-primary" disabled={isAddingStamp}>
+                        {isAddingStamp ? '...' : 'Ekle'}
+                      </Button>
                     </form>
-                    <Button onClick={startScanner} className="w-full mt-3 bg-black/30 hover:bg-black/50 text-white border border-white/20 gap-2">
+                    <Button onClick={startScanner} disabled={isAddingStamp} className="w-full mt-3 bg-black/30 hover:bg-black/50 text-white border border-white/20 gap-2">
                       <Camera size={18}/> Kamera ile QR Oku
                     </Button>
                   </CardContent>

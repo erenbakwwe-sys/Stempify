@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Coffee, CheckCircle2, X, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getUserByPhone, addStamp, getBusiness } from '@/lib/firestore';
+import { db } from '@/lib/firebase';
+import { collection, getDocs } from 'firebase/firestore';
 
 export default function CustomerQRScanPage({ params }: { params: Promise<{ businessId: string }> }) {
   const resolvedParams = use(params);
@@ -14,30 +16,46 @@ export default function CustomerQRScanPage({ params }: { params: Promise<{ busin
   const [status, setStatus] = useState<'loading' | 'waiting' | 'pin_entry' | 'success' | 'error' | 'not_found'>('loading');
   const [pin, setPin] = useState('');
   const [businessName, setBusinessName] = useState('');
-  const [staffPin, setStaffPin] = useState('1234');
+  // All valid staff PINs loaded from Firestore
+  const [validPins, setValidPins] = useState<string[]>(['1234']);
   const [stampResult, setStampResult] = useState<{ newCount: number; rewardEarned: boolean } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // For demo: we'll use a phone stored in localStorage (set during registration)
   const PIN_LENGTH = 4;
 
   useEffect(() => {
-    async function loadBusiness() {
+    async function loadData() {
       try {
+        // Load business name
         const biz = await getBusiness(businessId);
-        if (biz) {
-          setBusinessName(biz.name);
-          setStaffPin(biz.staffPin || '1234');
+        setBusinessName(biz?.name || businessId.replace(/-/g, ' '));
+
+        // Load all staff PINs from Firestore 'staff' collection
+        const staffSnap = await getDocs(collection(db, 'staff'));
+        if (!staffSnap.empty) {
+          const pins = staffSnap.docs
+            .map(d => (d.data() as { pin?: string }).pin)
+            .filter((p): p is string => !!p);
+          setValidPins(pins.length > 0 ? pins : ['1234']);
         } else {
-          setBusinessName(businessId.replace(/-/g, ' '));
+          // Fallback: try localStorage
+          const saved = localStorage.getItem('stampify_staff');
+          if (saved) {
+            const list: { pin: string }[] = JSON.parse(saved);
+            const pins = list.map(s => s.pin).filter(Boolean);
+            if (pins.length > 0) setValidPins(pins);
+          }
+          // Also check business-level staffPin as last resort
+          if (biz?.staffPin) setValidPins(prev => [...prev, biz.staffPin]);
         }
+
         setStatus('waiting');
       } catch {
         setBusinessName(businessId.replace(/-/g, ' '));
         setStatus('waiting');
       }
     }
-    loadBusiness();
+    loadData();
   }, [businessId]);
 
   const handlePinInput = (digit: string) => {
@@ -56,7 +74,7 @@ export default function CustomerQRScanPage({ params }: { params: Promise<{ busin
   };
 
   const validatePin = async (enteredPin: string) => {
-    if (enteredPin === staffPin) {
+    if (validPins.includes(enteredPin)) {
       // PIN correct - now give the stamp
       try {
         // Get user phone from localStorage (set during registration)
