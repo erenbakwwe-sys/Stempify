@@ -12,32 +12,9 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// Lazy initialization - only runs in the browser, never during SSR/build
-let _app: FirebaseApp | null = null;
-let _db: Firestore | null = null;
-let _auth: Auth | null = null;
-
-function getFirebaseApp(): FirebaseApp {
-  if (_app) return _app;
-  _app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  return _app;
-}
-
-// Use getters so Firebase only initializes when actually accessed (client-side)
-export const db: Firestore = new Proxy({} as Firestore, {
-  get(_, prop) {
-    if (!_db) _db = getFirestore(getFirebaseApp());
-    return (_db as any)[prop];
-  },
-});
-
-export const auth: Auth = new Proxy({} as Auth, {
-  get(_, prop) {
-    if (!_auth) _auth = getAuth(getFirebaseApp());
-    return (_auth as any)[prop];
-  },
-});
-
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+export const db = getFirestore(app);
+export const auth = getAuth(app);
 export const googleProvider = typeof window !== "undefined" ? new GoogleAuthProvider() : ({} as GoogleAuthProvider);
 
-export default getFirebaseApp;
+export default app;
