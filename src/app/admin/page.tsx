@@ -271,8 +271,9 @@ export default function AdminDashboard() {
         } else {
           toast.warning(`⚠️ Bu telefon numarası henüz kayıtlı değil: ${phone}`, { duration: 4000 });
         }
-      } catch (err) {
-        toast.error('Müşteri aranırken hata oluştu.');
+      } catch (err: any) {
+        console.error("QR Error:", err);
+        toast.error(`Hata: ${err.message || 'Müşteri aranırken hata oluştu.'}`);
       }
     } else {
       toast.info('QR kod okundu: ' + url);
