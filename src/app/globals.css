@@ -102,4 +102,11 @@
   .bg-gradient-premium {
     @apply bg-gradient-to-br from-background via-background to-primary/10;
   }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }

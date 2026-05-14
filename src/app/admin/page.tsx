@@ -9,12 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import { Lock, Users, Coffee, Sparkles, Send, PlusCircle, ArrowRight, Gift, ShieldAlert, Zap, MapPin, BellRing, ChevronDown, BarChart3, TrendingUp, Camera, X, UserPlus, Trash2, QrCode } from "lucide-react";
+import { Lock, Users, Coffee, Sparkles, Send, PlusCircle, ArrowRight, Gift, ShieldAlert, Zap, MapPin, BellRing, ChevronDown, BarChart3, TrendingUp, Camera, X, UserPlus, Trash2, QrCode, Download, Printer, Info } from "lucide-react";
 import { toast } from "sonner";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { getAllUsers, getUserByPhone, addStamp, type StampifyUser } from '@/lib/firestore';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { QRCodeSVG } from 'qrcode.react';
 
 
 // Recharts Mock Data
@@ -54,6 +55,30 @@ export default function AdminDashboard() {
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffRole, setNewStaffRole] = useState('garson');
   const [newStaffPin, setNewStaffPin] = useState('');
+
+  // QR Code
+  const qrRef = useRef<SVGSVGElement>(null);
+  const businessId = "demo-cafe-123";
+  const qrUrl = typeof window !== 'undefined' ? `${window.location.origin}/c/${businessId}` : '';
+
+  const downloadQR = () => {
+    const svg = qrRef.current;
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx?.drawImage(img, 0, 0);
+      const link = document.createElement('a');
+      link.download = `stampify-qr.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+  };
 
   // Load Firebase users on mount
   useEffect(() => {
@@ -100,6 +125,36 @@ export default function AdminDashboard() {
       toast.success(`${name} silindi.`);
       loadStaff();
     } catch { toast.error('Silme başarısız.'); }
+  };
+
+  // Export to CSV for Marketing
+  const handleExportCSV = () => {
+    // 1. Prepare data
+    const headers = ["ID", "Isim", "Telefon", "E-posta", "Dogum_Tarihi", "Damga_Sayisi", "Kazanilan_Hediyeler", "Kayit_Tarihi"];
+    const csvContent = [
+      headers.join(","),
+      ...filteredCustomers.map(c => [
+        c.id,
+        `"${c.name}"`, // Quote strings to handle commas in names
+        c.phone,
+        `"${c.email || ''}"`,
+        c.birthdate || '',
+        c.stamps,
+        c.lifetimeStamps,
+        c.lastVisit
+      ].join(","))
+    ].join("\n");
+
+    // 2. Create Blob and download link
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' }); // \uFEFF is for UTF-8 BOM (Excel compatibility)
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `stampify_musteriler_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Müşteri listesi Excel/CSV olarak indirildi!");
   };
 
   // QR Camera Scanner
@@ -271,18 +326,21 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 mt-8 relative z-10">
-        <Tabs defaultValue="dashboard" className="w-full space-y-8">
-          <TabsList className="grid w-full max-w-3xl grid-cols-6 mx-auto bg-black/40 backdrop-blur-md border border-white/10 p-1 rounded-xl h-12">
-            <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-primary transition-all">Özet</TabsTrigger>
-            <TabsTrigger value="analytics" className="rounded-lg data-[state=active]:bg-primary transition-all">Analiz</TabsTrigger>
-            <TabsTrigger value="customers" className="rounded-lg data-[state=active]:bg-primary transition-all">Müşteriler</TabsTrigger>
-            <TabsTrigger value="campaigns" className="rounded-lg data-[state=active]:bg-primary transition-all">Pazarlama</TabsTrigger>
-            <TabsTrigger value="staff" className="rounded-lg data-[state=active]:bg-primary transition-all">Çalışanlar</TabsTrigger>
-            <TabsTrigger value="feedback" className="rounded-lg data-[state=active]:bg-primary transition-all flex items-center gap-1">
-              Kalkan <span className="bg-red-500 text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center">{filteredFeedbacks.length}</span>
-            </TabsTrigger>
-          </TabsList>
+      <main className="container mx-auto px-3 sm:px-4 mt-4 sm:mt-8 relative z-10">
+        <Tabs defaultValue="dashboard" className="w-full space-y-4 sm:space-y-8">
+          <div className="overflow-x-auto -mx-3 px-3 scrollbar-hide">
+            <TabsList className="inline-flex w-auto min-w-full sm:grid sm:grid-cols-7 sm:max-w-4xl sm:mx-auto bg-black/40 backdrop-blur-md border border-white/10 p-1 rounded-xl h-11 sm:h-12 gap-1">
+              <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-primary transition-all text-xs sm:text-sm whitespace-nowrap px-3">Özet</TabsTrigger>
+              <TabsTrigger value="analytics" className="rounded-lg data-[state=active]:bg-primary transition-all text-xs sm:text-sm whitespace-nowrap px-3">Analiz</TabsTrigger>
+              <TabsTrigger value="customers" className="rounded-lg data-[state=active]:bg-primary transition-all text-xs sm:text-sm whitespace-nowrap px-3">Müşteriler</TabsTrigger>
+              <TabsTrigger value="qrcode" className="rounded-lg data-[state=active]:bg-primary transition-all text-xs sm:text-sm whitespace-nowrap px-3">QR Kodum</TabsTrigger>
+              <TabsTrigger value="campaigns" className="rounded-lg data-[state=active]:bg-primary transition-all text-xs sm:text-sm whitespace-nowrap px-3">Pazarlama</TabsTrigger>
+              <TabsTrigger value="staff" className="rounded-lg data-[state=active]:bg-primary transition-all text-xs sm:text-sm whitespace-nowrap px-3">Çalışanlar</TabsTrigger>
+              <TabsTrigger value="feedback" className="rounded-lg data-[state=active]:bg-primary transition-all flex items-center gap-1 text-xs sm:text-sm whitespace-nowrap px-3">
+                Kalkan <span className="bg-red-500 text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center">{filteredFeedbacks.length}</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <div className="mt-6">
             {/* DASHBOARD TAB */}
@@ -433,9 +491,14 @@ export default function AdminDashboard() {
             <TabsContent value="customers" className="m-0" key="customers">
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                 <Card className="glass-card border-white/5">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-2xl">Müşteri Listesi</CardTitle>
-                    <CardDescription>{selectedBranch} şubenize ait sadakat durumu.</CardDescription>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle className="font-heading text-2xl">Müşteri Listesi</CardTitle>
+                      <CardDescription>{selectedBranch} şubenize ait sadakat durumu.</CardDescription>
+                    </div>
+                    <Button onClick={handleExportCSV} variant="outline" className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10">
+                      <Download className="mr-2" size={16} /> Excel İndir (Lead)
+                    </Button>
                   </CardHeader>
                   <CardContent>
                     <div className="rounded-xl border border-white/10 overflow-hidden bg-black/20 overflow-x-auto">
@@ -486,7 +549,61 @@ export default function AdminDashboard() {
               </motion.div>
             </TabsContent>
 
-            {/* CAMPAIGNS TAB */}
+            {/* QR CODE TAB */}
+            <TabsContent value="qrcode" className="m-0" key="qrcode">
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid gap-6 md:grid-cols-2">
+                <Card className="glass-card border-white/5">
+                  <CardContent className="pt-8 pb-6 flex flex-col items-center text-center">
+                    <div className="bg-white p-5 rounded-2xl mb-6 shadow-xl">
+                      <QRCodeSVG value={qrUrl || 'https://stampify.vercel.app'} size={220} level="H" includeMargin={true} ref={qrRef} />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-1">Masa / Kasa QR Kodu</h3>
+                    <p className="text-neutral-400 text-sm mb-6 max-w-xs">Bu kodu kasanıza veya masalara koyun. Müşteriler okutarak damga kazanır.</p>
+                    <div className="flex flex-col sm:flex-row gap-3 w-full">
+                      <Button onClick={downloadQR} className="flex-1 bg-indigo-600 hover:bg-indigo-700 gap-2">
+                        <Download size={16}/> PNG İndir
+                      </Button>
+                      <Button onClick={() => window.print()} variant="outline" className="flex-1 border-white/10 gap-2">
+                        <Printer size={16}/> Yazdır
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card border-indigo-500/20">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-xl flex items-center gap-2 text-indigo-400">
+                      <Info size={20}/> Nasıl Çalışır?
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-4 text-sm text-neutral-300">
+                      <li className="flex items-start gap-3">
+                        <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">1</span>
+                        Müşteri telefonunun kamerasıyla QR kodu okuttur.
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">2</span>
+                        Tarayıcıda işletmenizin damga sayfası açılır.
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">3</span>
+                        Müşteri telefonu kasadaki görevliye gösterir.
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">4</span>
+                        Görevli 4 haneli PIN'ini girer → müşteriye 1 damga eklenir!
+                      </li>
+                    </ul>
+                    <div className="mt-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                      <p className="text-amber-400 text-xs font-semibold mb-1">⚠️ PIN neden gerekli?</p>
+                      <p className="text-amber-200/60 text-xs">PIN kodu, müşterinin QR kodun fotoğrafını çekip evden sahte damga eklemesini engeller. Sadece kasadaki çalışan PIN'i bilir.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </TabsContent>
+
             <TabsContent value="campaigns" className="m-0" key="campaigns">
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid gap-6 md:grid-cols-2">
                 <Card className="glass-card border-white/5 relative overflow-hidden">
